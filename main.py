@@ -11,12 +11,9 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 import os, glob, ast
-label = pd.read_csv('data/ticket.csv')
-paths = glob.glob('data/*/*.feather')
-paths = list(set(paths))
-paths.sort(key=os.path.getsize)
-test_path = 'data/test'
-train_path = 'data/train'
+paths = glob.glob('stage1_feather/*/*.feather')
+test_path = 'stage1_feather/test'
+train_path = 'stage1_feather/train'
 
 for path in paths:
     df = pd.read_feather(path).sort_values('LogTime', ascending=True)
@@ -55,17 +52,6 @@ for path in paths:
     feat = feat.apply(pd.Series)
     feat.columns = parity_col
     df = pd.concat([df, feat], axis=1)
-
-    df['storms'] = df['LogTime'].diff(10) <= 60
-    df['storms'] = df['storms'].groupby(df['LogTime'] //
-                                              (60 * 2)).transform('max')
-    df['storms'] *= df['LogTime'].groupby(
-        df['LogTime'] // (60 * 2)).transform('min') == df['LogTime']
-
-    df = df.groupby('day', as_index=False).agg(params)
-    df.columns = [
-        '_'.join(col) if isinstance(col, tuple) else col for col in df.columns
-    ]
     params = {
         'LogTime': 'count',
         'datetime': 'first',
@@ -78,6 +64,10 @@ for path in paths:
         params[col] = ['sum', 'max']
     for col in ['Capacity', 'Manufacturer', 'Model', 'PN', 'region']:
         params[col] = 'first'
+    df = df.groupby('day', as_index=False).agg(params)
+    df.columns = [
+        '_'.join(col) if isinstance(col, tuple) else col for col in df.columns
+    ]
     df = df.sort_values('datetime',ascending=False).reset_index(drop=True)
     for col in df.columns:
         df[f'{col}_diff'] = df[col].diff()
@@ -91,13 +81,13 @@ for path in paths:
         train.to_feather(f'{train_path}/{sn_id}.feather')
     if len(test):
         test.to_feather(f'{test_path}/{sn_id}.feather')
-paths = glob.glob('data/train/*')
-y = pd.read_csv('data/ticket.csv')
+
+y = pd.read_csv('stage1_feather/ticket.csv')
 y['datetime'] = pd.to_datetime(y['alarm_time'], unit='s')
 y['left'] = y['datetime'] - pd.Timedelta(days=7)
 y['right'] = y['datetime']
 df = []
-for path in paths:
+for path in glob.glob('stage1_feather/train/*'):
     df.append(pd.read_feather(path))
 df = pd.concat(df, ignore_index=True)
 df['label'] = 0
@@ -129,7 +119,7 @@ for fold, (train_index, valid_index) in enumerate(kf.split(df, y)):
                       num_boost_round=2000)
     models.append(model)
 df = []
-for path in glob.glob('data/test/*'):
+for path in glob.glob('stage1_feather/test/*'):
     df.append(pd.read_feather(path))
 df = pd.concat(df, ignore_index=True)
 for col in [
